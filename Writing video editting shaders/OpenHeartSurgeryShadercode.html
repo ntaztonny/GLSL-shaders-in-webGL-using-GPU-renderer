@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+			margin: 0;
+			padding: 0;
+			width: 100%;
+			height: 100%;
+			
+			margin: 0;
+			overflow: hidden;
+			background-color: #000000;
+			background-attachment: fixed !important;
+			}
+		</style>
+		<style>
+			body {
+				font-family: Monospace;
+				margin: 0px;
+				overflow: hidden;
+			}
+		</style>
+	</head>
+	<body>
+
+<script src="three.min.js"></script>
+<script src="OrbitControls.js"></script>
+<script src="dat.gui.js"></script>
+<script src="GPUComputationRenderer8UC3.js"></script>
+
+
+
+<!-- *********************************************** Shaders********************************************************** -->
+ 
+ <!-- Inversion shader and vertext shader -----This helps to select the region of the heart and also distinguish the surgeon hands ------->
+<script id="vertShader" type="shader">
+// 
+varying vec2 vUv;
+void main() {
+	//Getting the video texture coordinates
+    vUv = vec2( uv.x, 1.0-uv.y );
+    gl_Position = projectionMatrix *
+                  modelViewMatrix * vec4(position, 1.0 );
+}
+</script>
+
+
+<script id="fragShader" type="shader">
+// The fragment Shader renders the final result to the screen... Here an inversion is applied to select the surgeon hands
+
+// Variables for uniform, and varying types
+precision highp float;
+uniform sampler2D image;
+uniform vec2 resolution;
+uniform float GammaScale;
+uniform float SaturationValue;
+uniform float BrightnessValue;
+uniform bool invert;
+varying vec2 vUv;
+uniform bool gammaCC;
+uniform bool saturationCC;
+uniform bool brightnessCC;
+
+// ---------------------------------------Gamma Correction function---------------------------------------------------
+vec4 gammacorrection()
+{  
+	//getting the texture coordinates
+	vec2 texture_coordinate = vUv.xy;           
+    //Getting the video texture
+    vec3 hdrColor = texture2D(image, texture_coordinate).rgb;
+	// Defining an output from the gamma function
+  	vec4 out_clr;
+    // Reinhard tone mapping
+    vec3 mapped = hdrColor / (hdrColor + vec3(1.0));
+    // Gamma correction 
+    mapped = pow(mapped, vec3(1.0 / GammaScale));
+    
+    if (gammaCC) {
+		// apply Gamma Correction if the gammaCorrection switch is turned on
+		out_clr = vec4(mapped, 1.0);
+    }
+    else
+		// The gamma correction switch is off so just return the Video texture
+		out_clr = vec4 (hdrColor,1.0);
+	// The gammaScale Value adjusts the Gamma Correction and is applied if the gamma switch is on	
+	return out_clr * vec4(GammaScale);
+}  
+//----------------------------------------------------------------------------------------------------------------
+
+//------------------------Color Saturation Shader function--------------------------------------------------------
+
+vec4 colorSaturation()
+{	//Getting te texture coordinates
+	vec2 Saturation_texture_coordinate = vUv.xy; 
+	// Getting the image texture to apply the saturation
+	vec3 SaturationTexture = texture2D(image, Saturation_texture_coordinate).rgb;
+	// Setting Saturation values to achieve the result
+	const vec3 W = vec3( 0.2125, 0.7154, 0.0721 );
+	// Setting the saturation output variable
+	vec4 out_saraturation;
+	// Applying the vector W to get the luinosity of the image texture
+	float luminance = dot(SaturationTexture, W);
+	vec3 saturation = vec3( luminance, luminance, luminance );
+	
+	// Setting the saturation Value to either on or off and applying the saturation effect
+	if(saturationCC)
+		out_saraturation = vec4(mix( saturation, SaturationTexture, SaturationValue ), 1.0);
+	else
+		out_saraturation = vec4(SaturationTexture, 1.0);
+		
+	return out_saraturation;
+		
+}
+
+//----------------------------Brightness Shader Control effect--------------------------------------
+
+vec4 brightnessControl()
+{
+	vec2 texCoord = vUv.xy; 
+	// Getting the image texture to apply the saturation
+	vec3 videoTexture = texture2D(image, texCoord).rgb;
+	// Setting up a black color // Informally, brightness is the amount of not-black in a color.
+	vec3 blackColor = vec3(0.0,0.0,0.0);
+	
+	vec4 out_brightnessControl;
+	// Defining and applying brightness: 
+	if (brightnessCC)
+		out_brightnessControl = vec4(mix(blackColor, videoTexture, BrightnessValue), 1.0);
+	else
+		out_brightnessControl = vec4(videoTexture, 1.0);
+	
+	return out_brightnessControl;
+	
+}
+
+
+
+
+
+// Computing the Fragment shader
+void main(void) 
+{
+	            
+				vec2 cellSize = 1.0 / resolution.xy;
+				vec2 uv = vUv.xy;				
+				gl_FragColor = texture2D(image, uv);
+				
+				
+				
+				// Applying gamma Correction effect
+				if( gammaCC )
+				{
+					gl_FragColor = gammacorrection();
+				}
+				
+				//Applying the Brightness Control function
+				
+				if (brightnessCC)
+				{
+					gl_FragColor = brightnessControl();
+				}
+							
+				// Applying the saturation shader effect
+				if (saturationCC)
+				{
+					gl_FragColor = colorSaturation();
+				}
+				
+				// Applying the color inversion to select defined regions
+				if( invert )
+				{
+					gl_FragColor = vec4( 1.0 ) - gl_FragColor;
+				}
+				
+				
+}
+</script>
+
+
+
+
+
+
+
+
+<!-- ****************************************** End of Shaders *************************************** -->
+
+<script>
+
+
+function IVimageProcessing ( height, width, imageProcessingMaterial )
+{
+		this.height = height;
+		this.width = width;
+		
+        //3 rtt setup
+        this.scene = new THREE.Scene();
+        this.orthoCamera = new THREE.OrthographicCamera(-1,1,1,-1,1/Math.pow( 2, 53 ),1 );
+
+        //4 create a target texture
+        var options = {
+            minFilter: THREE.NearestFilter,
+            magFilter: THREE.NearestFilter,
+            format: THREE.RGBAFormat,
+            type:THREE.UnsignedByteType
+        };
+        this.rtt = new THREE.WebGLRenderTarget( width, height, options);
+
+        var geom = new THREE.BufferGeometry();
+        geom.addAttribute( 'position', new THREE.BufferAttribute( new Float32Array([-1,-1,0, 1,-1,0, 1,1,0, -1,-1, 0, 1, 1, 0, -1,1,0 ]), 3 ) );
+        geom.addAttribute( 'uv', new THREE.BufferAttribute( new Float32Array([ 0,1, 1,1, 1,0, 0,1, 1,0, 0,0 ]), 2 ) );
+        this.scene.add( new THREE.Mesh( geom, imageProcessingMaterial ) );
+}
+
+function IVprocess ( imageProcessing, renderer )
+{
+		renderer.render ( imageProcessing.scene, imageProcessing.orthoCamera, imageProcessing.rtt, true ); 	
+};
+</script>
+
+<script>
+var camera, controls, scene, renderer, container;
+var plan;
+
+// VIDEO AND THE ASSOCIATED TEXTURE
+var video,videoTexture;
+
+var imageProcessing, imageProcessingMaterial;
+
+// GUI
+var gui;
+
+init();
+animate();
+
+function init () {
+	
+    container = document.createElement( 'div' );
+	document.body.appendChild( container );
+	
+	scene = new THREE.Scene();
+
+	renderer = new THREE.WebGLRenderer( { antialias: true, alpha: true } );
+	renderer.autoClear = false;
+	renderer.setPixelRatio( window.devicePixelRatio );
+	renderer.setSize( window.innerWidth, window.innerHeight );
+	renderer.shadowMap.enabled = false;
+
+	container.appendChild( renderer.domElement );
+
+	camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.01, 10 );
+	camera.position.z = 0.7;
+	controls = new THREE.OrbitControls( camera, renderer.domElement );
+	controls.minDistance = 0.1;
+	controls.maxDistance = 1.0;
+	controls.enableRotate = false;
+	controls.addEventListener( 'change', render );
+	controls.update();
+
+	video = document.createElement('video');
+	video.src = 'OpenHeartSurgery.webm';
+	video.load();
+	video.muted = true;
+	video.loop = true;
+//
+	video.onloadeddata = function () 
+	{ 
+	videoTexture = new THREE.VideoTexture( video );
+	videoTexture.minFilter = THREE.NearestFilter;
+	videoTexture.magFilter = THREE.NearestFilter;
+	videoTexture.generateMipmaps = false; 
+	videoTexture.format = THREE.RGBFormat;
+
+	imageProcessingMaterial = new THREE.ShaderMaterial({
+    	uniforms: {
+            
+    	    // Setting the invert originally to false
+    	    invert: {type: 'b', value: false},
+            // setting the gamma scale
+			GammaScale: {type: 'f', value: 1.0},
+            //setting the gammaCC to originally false
+            gammaCC: {type: 'b', value: false},
+			// setting the SaturationValue
+			SaturationValue: {type: 'f', value: 1.5},
+            //setting the saturationCC to originally false
+            saturationCC: {type: 'b', value: false},
+			//Brightness Control
+			BrightnessValue:  {type: 'f', value: 1.5},
+			//Brightness control originally turned off
+			brightnessCC:  {type: 'b', value: false},
+			
+            // Sampler for the video texture
+        	image: {type: 't', value: videoTexture},
+        	resolution: {type: '2f', value:  new THREE.Vector2( video.videoWidth, video.videoHeight ) }
+    	},
+        //adding all the shaders that should be processed
+        // vertex shader
+    	vertexShader: document.getElementById('vertShader').text, 
+        // Fragment shader
+    	fragmentShader: document.getElementById('fragShader').text,
+		
+	});
+	
+	imageProcessing = new IVimageProcessing ( video.videoHeight, video.videoWidth, imageProcessingMaterial );
+	
+	var geometry = new THREE.PlaneGeometry( 1, video.videoHeight/video.videoWidth );
+	var material = new THREE.MeshBasicMaterial( { map: imageProcessing.rtt.texture});//, side : THREE.DoubleSide } );
+	plan = new THREE.Mesh( geometry, material );
+	plan.receiveShadow = false;
+	plan.castShadow = false;
+	scene.add( plan );
+	
+    
+     // Using the gui interface
+	gui = new dat.GUI();
+    
+    gui.add(imageProcessingMaterial.uniforms.invert , 'value').name('Color Inversion'); // Invert is true or false
+    gui.add(imageProcessingMaterial.uniforms.gammaCC , 'value').name('gamaCorrection'); // gamma correction is true or false
+	gui.add(imageProcessingMaterial.uniforms.GammaScale , 'value', 0.5, 1.5).name('Gamma Scale'); // Min and max
+	gui.add(imageProcessingMaterial.uniforms.saturationCC , 'value').name('SaturationCC'); // saturationCC is true or false
+	gui.add(imageProcessingMaterial.uniforms.SaturationValue , 'value', 0.0, 4.0).name('Saturation Value'); // setting saturation value
+	gui.add(imageProcessingMaterial.uniforms.brightnessCC , 'value').name('Brightness'); // Brightness correction
+	gui.add(imageProcessingMaterial.uniforms.BrightnessValue , 'value', 0.0, 2.0).name('Brightness Value');
+    
+	
+
+	video.play();
+    
+
+	};
+	// Handling the mouse adjustment changes
+    
+	window.addEventListener( 'resize', onWindowResize, false );
+}
+
+function render () {
+	renderer.clear();
+	
+	if (typeof imageProcessing !== 'undefined') 
+		IVprocess ( imageProcessing, renderer );
+	renderer.render( scene, camera );
+	
+}
+
+function animate() {	
+	requestAnimationFrame(animate);
+	controls.update();
+	render();
+}
+
+function onWindowResize () {
+	camera.aspect = ( window.innerWidth / window.innerHeight);
+	camera.updateProjectionMatrix();
+	renderer.setSize( window.innerWidth, window.innerHeight );
+	render();
+}
+
+</script>
+</body>
+</html>
