@@ -9,7 +9,7 @@
 
 1. This is a GPGPU project that explores how to use graphic shaders to create video editting effects.
 
-#### Please not that the effects will only be viewed in mozilla firefox, they are not active in google chrome.
+#### Please note that the effects will only be viewed in mozilla firefox, they are not active in google chrome.
 
 2. To find the shader effects and code, view the "OpenHeartSurgeryShadercode.html" file.
 
