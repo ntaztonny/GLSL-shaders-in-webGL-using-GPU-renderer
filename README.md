@@ -8,9 +8,10 @@
 ## Project description
 
 1. This is a GPGPU project that explores how to use graphic shaders to create video editting effects.
+2. The project uses three.js the three.js JavaScript Library.
 
 #### Please note that the effects will only be viewed in mozilla firefox, they are not active in google chrome.
 
-2. To find the shader effects and code, view the "OpenHeartSurgeryShadercode.html" file.
+3. To find the shader effects and code, view the "OpenHeartSurgeryShadercode.html" file.
 
 Thank you very much for checking out my work
